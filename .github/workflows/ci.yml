@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server (typecheck + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run typecheck
+      # `pretest` builds a throwaway SQLite DB (never the dev one), seeds it, then runs the integration
+      # tests: auth, permissions, pagination, DataLoader batching, depth/complexity limits, subscriptions.
+      - run: npm test
+
+  client:
+    name: Client (codegen + typecheck + tests + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      # Validates every query/mutation/fragment in the client against server/src/schema.graphql.
+      # A field renamed on the server without updating the client fails HERE, not in production.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  schema-check:
+    name: Schema (no breaking changes)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the base branch to diff against
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Fails the PR if a change would break an existing client: removed/renamed fields, tightened
+      # nullability, new required arguments, removed enum values... Additive changes pass.
+      - run: >
+          npx --yes @graphql-inspector/cli@latest diff
+          "git:origin/${{ github.base_ref }}:server/src/schema.graphql"
+          server/src/schema.graphql

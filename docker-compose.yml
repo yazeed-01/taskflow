@@ -1,0 +1,22 @@
+services:
+  taskflow:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      # `docker compose up` fails fast with a clear message if this isn't set.
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET, e.g. export JWT_SECRET=$(openssl rand -hex 32)}
+      # Optional limits (defaults shown)
+      MAX_QUERY_DEPTH: "12"
+      MAX_QUERY_COMPLEXITY: "10000"
+      RATE_LIMIT_PER_MIN: "600"
+    volumes:
+      - taskflow-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  taskflow-data:
