@@ -1,0 +1,34 @@
+{
+  "name": "taskflow-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "graphql-codegen --config codegen.ts",
+    "predev": "npm run codegen",
+    "dev": "vite",
+    "prebuild": "npm run codegen",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "npm run codegen && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@apollo/client": "^3.14.1",
+    "@hello-pangea/dnd": "^18.0.1",
+    "graphql": "^16.14.2",
+    "graphql-ws": "^6.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6"
+  },
+  "devDependencies": {
+    "@graphql-codegen/cli": "^7.4.6",
+    "@graphql-codegen/client-preset": "^6.2.3",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}
