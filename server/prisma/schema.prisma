@@ -1,0 +1,179 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ActivityType {
+  ISSUE_CREATED
+  ISSUE_UPDATED
+  ISSUE_MOVED
+  COMMENT_ADDED
+  MEMBER_ADDED
+}
+
+enum IssueStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum IssuePriority {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  memberships   Membership[]
+  reported      Issue[]        @relation("Reporter")
+  assigned      Issue[]        @relation("Assignee")
+  comments      Comment[]
+  activities    Activity[]
+  notifications Notification[]
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  members  Membership[]
+  projects Project[]
+  labels   Label[]
+  activity Activity[]
+  issues   Issue[]
+}
+
+model Membership {
+  workspaceId String
+  userId      String
+  role        Role      @default(MEMBER)
+  joinedAt    DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId])
+}
+
+model Project {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  name         String
+  key          String // short prefix, e.g. "ENG" -> ENG-12
+  description  String?
+  issueCounter Int       @default(0)
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  issues       Issue[]
+
+  @@unique([workspaceId, key])
+}
+
+model Issue {
+  id          String        @id @default(cuid())
+  projectId   String
+  // Denormalized from Project.workspaceId so tenant-wide lists/searches are ONE index range instead of a
+  // join + sort. Always set from the project at creation; a project never changes workspace.
+  workspaceId String
+  number      Int
+  title       String
+  description String?
+  status      IssueStatus   @default(BACKLOG)
+  priority    IssuePriority @default(NONE)
+  position    Float         @default(0) // order inside a kanban column
+  reporterId  String
+  assigneeId  String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  reporter  User       @relation("Reporter", fields: [reporterId], references: [id])
+  assignee  User?      @relation("Assignee", fields: [assigneeId], references: [id])
+  comments  Comment[]
+  labels    Label[]
+  activity  Activity[]
+
+  @@unique([projectId, number])
+  // One index per access path. Each ORDER BY must be satisfiable by an index, or SQLite sorts every matching row.
+  @@index([projectId, position, id]) // board (kanban order)
+  @@index([projectId, status, position, id]) // one board column
+  @@index([projectId, createdAt, id]) // project, newest first
+  @@index([workspaceId, createdAt, id]) // workspace-wide, newest first
+  @@index([workspaceId, assigneeId, createdAt, id]) // "my issues"
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  issueId   String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  author    User     @relation(fields: [authorId], references: [id])
+
+  @@index([issueId, createdAt])
+}
+
+model Label {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String    @default("#6b7280")
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  issues      Issue[]
+
+  @@unique([workspaceId, name])
+}
+
+// Append-only log of things that happened in a workspace (the activity feed).
+model Activity {
+  id          String       @id @default(cuid())
+  workspaceId String
+  actorId     String
+  type        ActivityType
+  issueId     String?
+  summary     String // denormalized at write time, e.g. "Ada moved ENG-3 to In Progress"
+  createdAt   DateTime     @default(now())
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor         User           @relation(fields: [actorId], references: [id])
+  issue         Issue?         @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  notifications Notification[]
+
+  @@index([workspaceId, createdAt])
+}
+
+// One row per (recipient, activity). readAt = null means unread.
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  activityId String
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}

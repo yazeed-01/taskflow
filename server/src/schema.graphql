@@ -1,0 +1,419 @@
+# TaskFlow schema — designed from what the client screens need, not from DB tables.
+# Issue lists are Relay connections (cursor pagination).
+
+scalar DateTime
+
+"Relay-style global object identification."
+interface Node {
+  id: ID!
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum IssueStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum IssuePriority {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+type User implements Node {
+  id: ID!
+  name: String!
+  "Private: only visible to the user themself or people who share a workspace with them; otherwise null."
+  email: String
+}
+
+type Workspace implements Node {
+  id: ID!
+  name: String!
+  slug: String!
+  members: [Member!]!
+  projects: [Project!]!
+  labels: [Label!]!
+  "The signed-in user's role in this workspace."
+  viewerRole: Role!
+  "Newest first."
+  activity(first: Int = 20, after: String): ActivityConnection!
+  "Search and filter issues across every project in the workspace."
+  issues(
+    first: Int = 20
+    after: String
+    filter: IssueFilter
+    orderBy: IssueOrder = NEWEST
+  ): IssueConnection!
+  createdAt: DateTime!
+}
+
+"A user's membership in a workspace, with their role."
+type Member {
+  user: User!
+  role: Role!
+  joinedAt: DateTime!
+}
+
+type Project implements Node {
+  id: ID!
+  workspace: Workspace!
+  name: String!
+  "Short prefix used in issue identifiers, e.g. ENG."
+  key: String!
+  description: String
+  "Paginated, filterable issues of this project. Kanban: one call per column with filter.status."
+  issues(
+    first: Int = 20
+    after: String
+    filter: IssueFilter
+    orderBy: IssueOrder = POSITION
+  ): IssueConnection!
+  createdAt: DateTime!
+}
+
+input IssueFilter {
+  status: IssueStatus
+  priority: IssuePriority
+  assigneeId: ID
+  "Only issues with no assignee. Cannot be combined with assigneeId."
+  unassigned: Boolean
+  labelId: ID
+  "Case-insensitive substring match on the title."
+  search: String
+}
+
+enum IssueOrder {
+  "Kanban order (lowest position first)."
+  POSITION
+  "Most recently created first."
+  NEWEST
+}
+
+"""
+Relay connection spec. Pagination is forward-only (first/after); max page size is 100.
+Cursors are opaque and only valid with the same `orderBy` they were issued for.
+"""
+type IssueConnection {
+  edges: [IssueEdge!]!
+  pageInfo: PageInfo!
+  """
+  Total matching issues (ignores first/after). Only computed when selected, and capped: it never counts past
+  10,000 — or 1,000 for a text search with many matches — because counting 600,000 rows to print an exact
+  number is not worth a request. A value equal to the cap means "at least this many".
+  """
+  totalCount: Int!
+}
+
+type IssueEdge {
+  cursor: String!
+  node: Issue!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type Issue implements Node {
+  id: ID!
+  "Human-friendly identifier, e.g. ENG-12."
+  identifier: String!
+  project: Project!
+  title: String!
+  description: String
+  status: IssueStatus!
+  priority: IssuePriority!
+  "Sort order inside a kanban column."
+  position: Float!
+  reporter: User!
+  assignee: User
+  labels: [Label!]!
+  comments: [Comment!]!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type Comment implements Node {
+  id: ID!
+  issue: Issue!
+  author: User!
+  body: String!
+  createdAt: DateTime!
+}
+
+type Label implements Node {
+  id: ID!
+  name: String!
+  color: String!
+}
+
+"What happened in a workspace. `summary` is rendered text, e.g. \"Ada moved ENG-3 to In Progress\"."
+type Activity {
+  id: ID!
+  type: ActivityType!
+  actor: User!
+  issue: Issue
+  summary: String!
+  createdAt: DateTime!
+}
+
+enum ActivityType {
+  ISSUE_CREATED
+  ISSUE_UPDATED
+  ISSUE_MOVED
+  COMMENT_ADDED
+  MEMBER_ADDED
+}
+
+type ActivityEdge {
+  cursor: String!
+  node: Activity!
+}
+
+"Newest first. Forward-only (first/after), max 100 per page."
+type ActivityConnection {
+  edges: [ActivityEdge!]!
+  pageInfo: PageInfo!
+}
+
+"A personal inbox item. Only ever visible to its recipient."
+type Notification {
+  id: ID!
+  activity: Activity!
+  read: Boolean!
+  createdAt: DateTime!
+}
+
+type NotificationEdge {
+  cursor: String!
+  node: Notification!
+}
+
+type NotificationConnection {
+  edges: [NotificationEdge!]!
+  pageInfo: PageInfo!
+  "Unread notifications across the whole inbox, regardless of first/after."
+  unreadCount: Int!
+}
+
+type Query {
+  "The current user, from the `Authorization: Bearer <jwt>` header. Null when anonymous."
+  me: User
+  workspaces: [Workspace!]!
+  workspace(slug: String!): Workspace
+  project(id: ID!): Project
+  issue(id: ID!): Issue
+  "The signed-in user's notifications, newest first."
+  notifications(first: Int = 20, after: String, unreadOnly: Boolean = false): NotificationConnection!
+  "Fetch any object by its global ID."
+  node(id: ID!): Node
+}
+
+# ---------- Expected errors are part of the schema ----------
+# Validation / not-found / permission problems are *data* a client can handle exhaustively with a
+# union, not exceptions. Unexpected failures and UNAUTHENTICATED still surface in the `errors` array.
+
+interface UserError {
+  message: String!
+}
+
+type ValidationError implements UserError {
+  message: String!
+  "The input field at fault, when there is one."
+  field: String
+}
+
+type NotFoundError implements UserError {
+  message: String!
+}
+
+type ForbiddenError implements UserError {
+  message: String!
+}
+
+# ---------- Mutations: one input type + one result union each ----------
+
+input CreateWorkspaceInput {
+  name: String!
+  slug: String!
+}
+type CreateWorkspacePayload {
+  workspace: Workspace!
+}
+union CreateWorkspaceResult = CreateWorkspacePayload | ValidationError | NotFoundError | ForbiddenError
+
+input CreateProjectInput {
+  workspaceId: ID!
+  name: String!
+  key: String!
+  description: String
+}
+type CreateProjectPayload {
+  project: Project!
+}
+union CreateProjectResult = CreateProjectPayload | ValidationError | NotFoundError | ForbiddenError
+
+input CreateIssueInput {
+  projectId: ID!
+  title: String!
+  description: String
+  status: IssueStatus = BACKLOG
+  priority: IssuePriority = NONE
+  assigneeId: ID
+  labelIds: [ID!]
+}
+type CreateIssuePayload {
+  issue: Issue!
+}
+union CreateIssueResult = CreateIssuePayload | ValidationError | NotFoundError | ForbiddenError
+
+input UpdateIssueInput {
+  id: ID!
+  title: String
+  description: String
+  priority: IssuePriority
+  "Omit to leave unchanged; null to unassign."
+  assigneeId: ID
+  labelIds: [ID!]
+}
+type UpdateIssuePayload {
+  issue: Issue!
+}
+union UpdateIssueResult = UpdateIssuePayload | ValidationError | NotFoundError | ForbiddenError
+
+"Kanban drag-and-drop: move an issue to a column and a position inside it."
+input MoveIssueInput {
+  id: ID!
+  status: IssueStatus!
+  position: Float!
+}
+type MoveIssuePayload {
+  issue: Issue!
+}
+union MoveIssueResult = MoveIssuePayload | ValidationError | NotFoundError | ForbiddenError
+
+input AddCommentInput {
+  issueId: ID!
+  body: String!
+}
+type AddCommentPayload {
+  comment: Comment!
+}
+union AddCommentResult = AddCommentPayload | ValidationError | NotFoundError | ForbiddenError
+
+input CreateLabelInput {
+  workspaceId: ID!
+  name: String!
+  color: String
+}
+type CreateLabelPayload {
+  label: Label!
+}
+union CreateLabelResult = CreateLabelPayload | ValidationError | NotFoundError | ForbiddenError
+
+input SignUpInput {
+  name: String!
+  email: String!
+  "Minimum 8 characters."
+  password: String!
+}
+input LoginInput {
+  email: String!
+  password: String!
+}
+type AuthPayload {
+  token: String!
+  user: User!
+}
+
+"Roles: OWNER > ADMIN > MEMBER. Only OWNERs can grant or change the OWNER role."
+input AddMemberInput {
+  workspaceId: ID!
+  email: String!
+  role: Role = MEMBER
+}
+type AddMemberPayload {
+  member: Member!
+}
+union AddMemberResult = AddMemberPayload | ValidationError | NotFoundError | ForbiddenError
+
+input UpdateMemberRoleInput {
+  workspaceId: ID!
+  userId: ID!
+  role: Role!
+}
+type UpdateMemberRolePayload {
+  member: Member!
+}
+union UpdateMemberRoleResult = UpdateMemberRolePayload | ValidationError | NotFoundError | ForbiddenError
+
+input RemoveMemberInput {
+  workspaceId: ID!
+  userId: ID!
+}
+type RemoveMemberPayload {
+  removedUserId: ID!
+}
+union RemoveMemberResult = RemoveMemberPayload | ValidationError | NotFoundError | ForbiddenError
+
+"Omit `ids` to mark every notification as read."
+input MarkNotificationsReadInput {
+  ids: [ID!]
+}
+type MarkNotificationsReadPayload {
+  unreadCount: Int!
+}
+
+type Mutation {
+  "Throws UNAUTHENTICATED / BAD_USER_INPUT / RATE_LIMITED (credentials are not 'expected data')."
+  signUp(input: SignUpInput!): AuthPayload!
+  login(input: LoginInput!): AuthPayload!
+  addMember(input: AddMemberInput!): AddMemberResult!
+  updateMemberRole(input: UpdateMemberRoleInput!): UpdateMemberRoleResult!
+  removeMember(input: RemoveMemberInput!): RemoveMemberResult!
+  createWorkspace(input: CreateWorkspaceInput!): CreateWorkspaceResult!
+  createProject(input: CreateProjectInput!): CreateProjectResult!
+  createIssue(input: CreateIssueInput!): CreateIssueResult!
+  updateIssue(input: UpdateIssueInput!): UpdateIssueResult!
+  moveIssue(input: MoveIssueInput!): MoveIssueResult!
+  addComment(input: AddCommentInput!): AddCommentResult!
+  createLabel(input: CreateLabelInput!): CreateLabelResult!
+  markNotificationsRead(input: MarkNotificationsReadInput!): MarkNotificationsReadPayload!
+}
+
+# ---------- Real-time (graphql-ws). Auth: connectionParams { authorization: "Bearer <jwt>" } ----------
+
+enum IssueEventType {
+  CREATED
+  UPDATED
+  MOVED
+}
+
+type IssueEvent {
+  type: IssueEventType!
+  issue: Issue!
+  actor: User!
+}
+
+type Subscription {
+  "Every create/update/move of an issue in a project. The caller must be a member of the project's workspace."
+  issueEvents(projectId: ID!): IssueEvent!
+  "New comments on one issue."
+  commentAdded(issueId: ID!): Comment!
+  "New entries in a workspace's activity feed."
+  activityAdded(workspaceId: ID!): Activity!
+  "A notification addressed to the signed-in user."
+  notificationReceived: Notification!
+}

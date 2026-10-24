@@ -1,0 +1,52 @@
+{
+  "name": "taskflow-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "start": "tsx --env-file=.env src/index.ts",
+    "test": "tsx --env-file=.env.test --test test/*.test.ts",
+    "bench": "tsx --env-file=.env scripts/bench.ts",
+    "typecheck": "tsc --noEmit",
+    "db:push": "prisma db push",
+    "db:seed": "tsx --env-file=.env prisma/seed.ts",
+    "db:reset": "prisma db push --force-reset && npm run db:seed",
+    "pretest": "node scripts/prepare-test-db.mjs",
+    "start:demo": "tsx --env-file=.env.test src/index.ts",
+    "search:rebuild": "tsx --env-file=.env scripts/rebuild-search.ts",
+    "loadtest:seed": "tsx scripts/seed-huge.ts"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.13.0",
+    "@graphql-tools/schema": "^11.0.6",
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dataloader": "^2.2.3",
+    "express": "^4.22.3",
+    "express-rate-limit": "^8.7.1",
+    "graphql": "^16.14.2",
+    "graphql-query-complexity": "^2.0.0",
+    "graphql-subscriptions": "^3.0.0",
+    "graphql-ws": "^6.4.1",
+    "jsonwebtoken": "^9.0.3",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "prisma": "^6.19.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "prisma@6.19.3": true,
+    "esbuild@0.28.2": true
+  }
+}
