@@ -1,0 +1,8 @@
+data/
+results/*.csv
+results/*.json
+results/*.txt
+results/*.err
+results/*.log
+results/*.before.md
+tools/
